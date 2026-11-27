@@ -3,6 +3,11 @@
 from __future__ import annotations
 
 State = tuple[int, tuple[bool, ...]]
+ACTION_COSTS = {"LEFT": 1, "RIGHT": 1, "SUCK": 2}
+
+
+def action_cost(action: str) -> int:
+    return ACTION_COSTS.get(action, 1)
 
 
 def make_start(room_count: int, dirty: tuple[bool, ...] | None = None, start: int = 0) -> State:

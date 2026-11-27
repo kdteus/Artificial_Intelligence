@@ -284,6 +284,12 @@ def draw_dfs_icon(surface: pygame.Surface, cx: int, cy: int, color: tuple[int, i
         pygame.draw.circle(surface, color, pt, 2)
 
 
+def draw_ucs_icon(surface: pygame.Surface, cx: int, cy: int, color: tuple[int, int, int]) -> None:
+    pygame.draw.rect(surface, color, (cx - 6, cy - 5, 5, 3), border_radius=1)
+    pygame.draw.rect(surface, color, (cx - 6, cy - 1, 9, 3), border_radius=1)
+    pygame.draw.rect(surface, color, (cx - 6, cy + 3, 12, 3), border_radius=1)
+
+
 def draw_popover(surface: pygame.Surface, rect: pygame.Rect, theme: Theme, radius: int = 16) -> None:
     s3 = pygame.Rect(rect.x, rect.y + 8, rect.width, rect.height)
     s2 = pygame.Rect(rect.x, rect.y + 4, rect.width, rect.height)

@@ -23,7 +23,7 @@ if sys.platform == "win32":
 try:
     import pygame
 except ImportError as exc:
-    raise SystemExit("Thiếu Pygame. Cài bằng: python -m pip install -r requirements.txt") from exc
+    raise SystemExit("Thiếu Pygame") from exc
 
 ROOT = Path(__file__).resolve().parent
 if str(ROOT) not in sys.path:
@@ -57,6 +57,7 @@ from ui_theme import (
     draw_stage_grid,
     draw_step_icon,
     draw_theme_icon,
+    draw_ucs_icon,
     draw_vacuum_icon,
 )
 
@@ -84,11 +85,13 @@ ACTION_SHORT = {
 ALGO_NOTES = {
     "BFS": "Mở rộng theo từng tầng độ sâu, đảm bảo tìm thấy lời giải có số bước ít nhất.",
     "DFS": "Đi sâu hết nhánh hiện tại rồi quay lui; tốn ít bộ nhớ hơn nhưng không đảm bảo ngắn nhất.",
+    "UCS": "Luôn mở rộng trạng thái có tổng chi phí thấp nhất từ gốc, đảm bảo tối ưu theo trọng số.",
 }
 
 ALGO_BADGES = {
     "BFS": "Ngắn nhất",
     "DFS": "Tìm sâu",
+    "UCS": "Chi phí tối ưu",
 }
 
 GAME_OPTIONS = [
@@ -207,10 +210,12 @@ class SearchStudio:
             goal = eight_puzzle.GOAL
             next_states = eight_puzzle.successors
             is_goal = lambda state: state == goal
+            cost_fn = eight_puzzle.action_cost
         else:
             start = vacuum.make_start(self.vacuum_count, tuple(self.vacuum_dirty), self.vacuum_start)
             next_states = vacuum.successors
             is_goal = vacuum.is_goal
+            cost_fn = vacuum.action_cost
 
         self.job_version += 1
         version = self.job_version
@@ -224,7 +229,14 @@ class SearchStudio:
             durations = {}
             for name in selected:
                 started = time.perf_counter()
-                results[name] = ALGORITHMS[name]["search"](start, is_goal, next_states)
+                cfg = ALGORITHMS[name]
+                if cfg.get("uses_cost"):
+                    res = cfg["search"](start, is_goal, next_states, cost_fn=cost_fn)
+                else:
+                    res = cfg["search"](start, is_goal, next_states)
+                if res is not None and res.total_cost is None:
+                    res.total_cost = sum(cost_fn(action) for action in res.actions)
+                results[name] = res
                 durations[name] = time.perf_counter() - started
             return version, results, durations
 
@@ -450,6 +462,16 @@ class SearchStudio:
     def _add_button(self, rect, label, callback, style="neutral", icon=None):
         self.buttons.append((pygame.Rect(rect), label, callback, style, icon))
 
+    @staticmethod
+    def _algo_icon(algo: str) -> str:
+        if algo == "BFS":
+            return "bfs"
+        if algo == "DFS":
+            return "dfs"
+        if algo == "UCS":
+            return "ucs"
+        return f"dot_{ALGORITHMS[algo].get('theme', 'blue')}"
+
     def _draw_topbar(self, mouse_pos):
         bar = pygame.Rect(24, 18, 1232, 74)
         draw_card(self.screen, bar, self.theme, radius=18)
@@ -459,7 +481,7 @@ class SearchStudio:
         self._text("Search Studio", self.fonts.brand, self.theme.ink, (90, 29))
         self._text("Trực quan hóa thuật toán", self.fonts.small, self.theme.muted, (91, 56))
 
-        algo_icon = "bfs" if self.selected_algorithm == "BFS" else ("dfs" if self.selected_algorithm == "DFS" else f"dot_{ALGORITHMS[self.selected_algorithm].get('theme', 'blue')}")
+        algo_icon = self._algo_icon(self.selected_algorithm)
         self._add_button(
             (278, 35, 134, 40),
             self.selected_algorithm,
@@ -565,6 +587,8 @@ class SearchStudio:
                     draw_bfs_icon(self.screen, icon_x + 1, icon_y, icon_color)
                 elif icon == "dfs":
                     draw_dfs_icon(self.screen, icon_x + 1, icon_y, icon_color)
+                elif icon == "ucs":
+                    draw_ucs_icon(self.screen, icon_x + 1, icon_y, icon_color)
                 elif icon == "theme":
                     draw_theme_icon(self.screen, icon_x, icon_y, icon_color, self.theme.name == "dark")
                 elif icon.startswith("dot_"):
@@ -586,7 +610,7 @@ class SearchStudio:
         if self.open_menu == "algorithm":
             options = []
             for algo, cfg in ALGORITHMS.items():
-                icon_type = "bfs" if algo == "BFS" else ("dfs" if algo == "DFS" else f"dot_{cfg.get('theme', 'blue')}")
+                icon_type = self._algo_icon(algo)
                 options.append(
                     (
                         algo,
@@ -643,6 +667,8 @@ class SearchStudio:
                 draw_bfs_icon(self.screen, icon_cx, icon_cy, icon_col)
             elif icon_type == "dfs":
                 draw_dfs_icon(self.screen, icon_cx, icon_cy, icon_col)
+            elif icon_type == "ucs":
+                draw_ucs_icon(self.screen, icon_cx, icon_cy, icon_col)
             elif icon_type == "puzzle":
                 draw_puzzle_icon(self.screen, icon_cx, icon_cy, icon_col)
             elif icon_type == "vacuum":
@@ -841,10 +867,16 @@ class SearchStudio:
         subtitle = ALGORITHMS[self.selected_algorithm]["subtitle"]
         self._text(subtitle, self.fonts.small, self.theme.ink_soft, (box.x + 26, box.y + 48))
 
-        note = ALGO_NOTES.get(
-            self.selected_algorithm,
-            "Thuật toán tìm kiếm từ registry sẽ duyệt không gian trạng thái từ điểm bắt đầu.",
-        )
+        if self.selected_algorithm == "UCS":
+            if self.game == "puzzle":
+                note = "Trọng số 8 Puzzle: Lên / Xuống = 1 · Trái / Phải = 2. Luôn chọn đường có tổng chi phí nhỏ nhất."
+            else:
+                note = "Trọng số Máy hút bụi: Trái / Phải = 1 · Hút bụi = 2. Luôn chọn đường có tổng chi phí nhỏ nhất."
+        else:
+            note = ALGO_NOTES.get(
+                self.selected_algorithm,
+                "Thuật toán tìm kiếm từ registry sẽ duyệt không gian trạng thái từ điểm bắt đầu.",
+            )
         self._wrapped_text(note, self.fonts.small, self.theme.muted, pygame.Rect(box.x + 26, box.y + 74, 330, 48))
 
     def _draw_right_panel(self, mouse_pos):
@@ -885,15 +917,24 @@ class SearchStudio:
             else:
                 self._center(status_txt, self.fonts.micro, sa, st_rect.center)
 
+        cost_val = "—"
+        if result is not None:
+            total_cost = result.total_cost
+            if total_cost is None:
+                cost_fn = eight_puzzle.action_cost if self.game == "puzzle" else vacuum.action_cost
+                total_cost = sum(cost_fn(a) for a in result.actions)
+            cost_val = f"{total_cost:,}"
+
         metrics = [
             ("MỞ RỘNG", f"{result.expanded:,}" if result else "—", "trạng thái đã xét"),
             ("ĐÃ THẤY", f"{result.discovered:,}" if result else "—", "trạng thái đã sinh"),
             ("SỐ BƯỚC", str(len(result.actions)) if result else "—", "độ dài lời giải"),
+            ("CHI PHÍ", cost_val, "tổng trọng số"),
             ("THỜI GIAN", f"{elapsed * 1000:.1f} ms" if result else "—", "thời gian xử lý"),
         ]
         for idx, (label, val, hint) in enumerate(metrics):
-            mx = 480 + idx * 192
-            m_rect = pygame.Rect(mx, 168, 180, 86)
+            mx = 480 + idx * 153
+            m_rect = pygame.Rect(mx, 168, 142, 86)
             draw_rounded(self.screen, m_rect, self.theme.card_alt, 14, outline=self.theme.line)
             pygame.draw.rect(self.screen, accent, (mx + 14, 168, 36, 3), border_radius=2)
             self._text(label, self.fonts.micro, self.theme.muted, (mx + 14, 178))
@@ -960,7 +1001,12 @@ class SearchStudio:
         else:
             action_code = str(result.actions[min(self.frame_index, len(result.actions)) - 1])
             action_text = ACTION_LABELS.get(action_code, action_code)
-            sub_text = f"Ô số {moved_value} di chuyển" if moved_value else f"Bước {self.frame_index}"
+            step_w = eight_puzzle.action_cost(action_code)
+            sub_text = (
+                f"Ô số {moved_value} di chuyển (+{step_w})"
+                if moved_value
+                else f"Bước {self.frame_index} (+{step_w})"
+            )
 
         icon_box = pygame.Rect(panel.x + 22, panel.y + 50, 56, 56)
         draw_rounded(self.screen, icon_box, pale, 14, outline=border)
@@ -1041,10 +1087,15 @@ class SearchStudio:
                 draw_robot(self.screen, tile.centerx, tile.y - 22, accent, self.theme.white, sucking=(action_code == "SUCK"))
 
         action_label = ACTION_LABELS.get(action_code, action_code)
+        step_w = vacuum.action_cost(action_code) if action_code != "START" else 0
         cap_text = (
             f"Vị trí hiện tại: Phòng {position + 1} · Sẵn sàng mô phỏng"
             if result is None
-            else f"Hành động: {action_label} · Robot đang ở Phòng {position + 1}"
+            else (
+                f"Hành động: {action_label} (+{step_w}) · Robot ở Phòng {position + 1}"
+                if step_w
+                else f"Hành động: {action_label} · Robot ở Phòng {position + 1}"
+            )
         )
         cap_pill = pygame.Rect(stage.centerx - 220, stage.bottom - 52, 440, 34)
         draw_rounded(self.screen, cap_pill, self.theme.card, 12, outline=border if result else self.theme.line)

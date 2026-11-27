@@ -7,7 +7,12 @@ import random
 State = tuple[int, ...]
 GOAL: State = (1, 2, 3, 4, 5, 6, 7, 8, 0)
 ACTION_ORDER = ("UP", "DOWN", "LEFT", "RIGHT")
+ACTION_COSTS = {"UP": 1, "DOWN": 1, "LEFT": 2, "RIGHT": 2}
 INVERSE = {"UP": "DOWN", "DOWN": "UP", "LEFT": "RIGHT", "RIGHT": "LEFT"}
+
+
+def action_cost(action: str) -> int:
+    return ACTION_COSTS.get(action, 1)
 
 
 def successors(state: State) -> list[tuple[str, State]]:
